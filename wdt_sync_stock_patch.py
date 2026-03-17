@@ -14,11 +14,36 @@
 
 def sync_stock():
     """
-    拉取旺店通全量实时库存数据
+    拉取旺店通全量实时库存数据（含零库存和负库存）
     API: stock.search (库存查询接口)
+    分两次拉取确保覆盖全部 SKU：
+    1. 默认拉取（库存>0）
+    2. 补充拉取负库存（可发货库存<0）
     """
     log.info("拉取全量实时库存...")
-    rows = fetch_all(CLIENT_OT, 'stock.search', {})
+
+    # 第一次：拉取全部（默认返回有库存的）
+    rows = fetch_all(CLIENT_OT, 'stock.search', {
+        'status': 0,  # 0=全部状态（已启用+未启用）
+    })
+
+    # 第二次：补充拉取负库存的 SKU
+    log.info("补充拉取负库存SKU...")
+    neg_rows = fetch_all(CLIENT_OT, 'stock.search', {
+        'status': 0,
+        'stock_num_max': 0,  # 库存<=0
+    })
+
+    # 合并去重（以 spec_no + warehouse_no 为唯一键）
+    seen = set()
+    all_rows = []
+    for r in (rows or []) + (neg_rows or []):
+        key = (r.get('spec_no', ''), r.get('warehouse_no', ''))
+        if key not in seen:
+            seen.add(key)
+            all_rows.append(r)
+    rows = all_rows
+    log.info(f"合并后总记录数: {len(rows)}（含负库存 {len(neg_rows or [])} 条）")
     if not rows:
         log.error("未拉取到库存数据")
         return None
